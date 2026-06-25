@@ -30,29 +30,33 @@
      4. In Project settings (gear icon) → General → "Your apps" →
         click the </> (web) icon → register app → copy the
         firebaseConfig object it gives you.
-     5. Paste it below, replacing the placeholder values.
-     6. Also set CRM_PASSCODE below to whatever word/phrase you want
-        people to type before they can see the client list. This is
-        a basic deterrent, NOT real security — anyone who views this
-        page's source code can read the passcode. Don't rely on it to
-        protect sensitive data; it just keeps casual visitors out.
+     5. Set CRM_PASSCODE in the small script just below to whatever
+        word/phrase you want people to type before they can see the
+        client list. This is a basic deterrent, NOT real security —
+        anyone who views this page's source code can read the
+        passcode. Don't rely on it to protect sensitive data; it
+        just keeps casual visitors out.
+     6. Then paste your firebaseConfig into the script below that,
+        replacing the placeholder values.
      ==================================================================== -->
+<script>
+  // Set synchronously (not inside the module script below) so the
+  // passcode is available immediately — module scripts run async and
+  // can otherwise lose the race against the gate screen's click handler.
+  window.CRM_PASSCODE = "bball213";
+</script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
   const firebaseConfig = {
-  apiKey: "AIzaSyBkMg_iVFbjRpUpDYhfwFFBomgPKO1hq3Y",
-  authDomain: "mikee-client-list.firebaseapp.com",
-  projectId: "mikee-client-list",
-  storageBucket: "mikee-client-list.firebasestorage.app",
-  messagingSenderId: "244027138664",
-  appId: "1:244027138664:web:2a01bc91edec07940851dd",
-  measurementId: "G-YDK72S0D1M"
-};
-
-  // Change this to your own passcode before deploying.
-  window.CRM_PASSCODE = "bball213";
+    apiKey: "AIzaSyBkMg_iVFbjRpUpDYhfwFFBomgPKO1hq3Y",
+    authDomain: "mikee-client-list.firebaseapp.com",
+    projectId: "mikee-client-list",
+    storageBucket: "mikee-client-list.firebasestorage.app",
+    messagingSenderId: "244027138664",
+    appId: "1:244027138664:web:2a01bc91edec07940851dd"
+  };
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
@@ -385,6 +389,11 @@
   .modal-body { padding: 22px 24px 28px; }
 
   .field-group { margin-bottom: 16px; }
+  .ready-hint {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 6px;
+  }
   .field-label {
     display: block;
     font-size: 11.5px;
@@ -520,6 +529,43 @@
   }
   .loading-banner { background: var(--hairline-soft); color: var(--ink-soft); }
   .error-banner { background: #FBF0EC; color: var(--clay-deep); }
+
+  .followup-banner {
+    background: #FBF0EC;
+    border: 1.5px solid var(--clay);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 18px;
+  }
+  .followup-banner-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--clay-deep);
+    margin-bottom: 10px;
+  }
+  .followup-banner-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .followup-chip {
+    background: var(--card);
+    border: 1.5px solid var(--clay);
+    color: var(--clay-deep);
+    border-radius: 999px;
+    padding: 7px 13px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+  }
+  .followup-chip:hover { background: var(--clay); color: #fff; }
+  .followup-chip:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .followup-chip-date {
+    font-weight: 400;
+    opacity: 0.8;
+    margin-left: 4px;
+  }
 
   /* ===== Passcode gate ===== */
   .gate-wrap {
@@ -670,6 +716,7 @@
       status: 'prospective',
       lastContacted: '',
       prequalAmount: '',
+      readyDate: '',
       notes: '',
       showings: []
     };
@@ -737,6 +784,35 @@
     return Math.floor((Date.now() - d.getTime()) / (1000*60*60*24));
   }
 
+  // Returns null if there's no ready date or it's invalid.
+  // Otherwise returns { reminderDate, daysUntilReminder, due }.
+  // "due" is true once today is at or past the 2-months-before mark.
+  function readyHintText(readyDateStr) {
+    const r = getReadyReminder(readyDateStr);
+    if (!r) return '';
+    const reminderStr = r.reminderDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (r.due) {
+      return `⚠ Follow-up reminder was due ${reminderStr} — this client will show in the Needs Follow-Up list.`;
+    }
+    return `Reminder will trigger on ${reminderStr} (2 months before this date).`;
+  }
+
+  function getReadyReminder(readyDateStr) {
+    if (!readyDateStr) return null;
+    const ready = new Date(readyDateStr + 'T00:00:00');
+    if (isNaN(ready.getTime())) return null;
+    const reminder = new Date(ready);
+    reminder.setMonth(reminder.getMonth() - 2);
+    const todayMs = new Date(new Date().toDateString()).getTime();
+    const reminderMs = reminder.getTime();
+    const daysUntilReminder = Math.round((reminderMs - todayMs) / (1000*60*60*24));
+    return {
+      reminderDate: reminder,
+      daysUntilReminder,
+      due: daysUntilReminder <= 0
+    };
+  }
+
   function statusLabel(s) {
     return { active: 'Active', prospective: 'Prospective', past: 'Past Client' }[s] || s;
   }
@@ -802,6 +878,19 @@
       html += `<div class="error-banner">Couldn't connect to the database. If you just downloaded this file, make sure you've pasted your Firebase config into the HTML — see the setup comment near the top of the file.</div>`;
     }
 
+    const dueClients = clients.filter(c => {
+      const r = getReadyReminder(c.readyDate);
+      return r && r.due;
+    });
+    if (dueClients.length > 0) {
+      html += `<div class="followup-banner">
+        <div class="followup-banner-title">📋 Needs Follow-Up — ${dueClients.length} client${dueClients.length===1?'':'s'}</div>
+        <div class="followup-banner-list">
+          ${dueClients.map(c => `<button class="followup-chip" data-id="${c.id}">${escapeHtml(c.name) || '(Unnamed)'} <span class="followup-chip-date">ready ${fmtDate(c.readyDate)}</span></button>`).join('')}
+        </div>
+      </div>`;
+    }
+
     html += `<div class="stats-strip">
       <div class="stat-card"><div class="stat-num">${counts.active}</div><div class="stat-label">Active</div></div>
       <div class="stat-card"><div class="stat-num">${counts.prospective}</div><div class="stat-label">Prospective</div></div>
@@ -840,6 +929,7 @@
       list.forEach(c => {
         const stale = daysSince(c.lastContacted) >= 14;
         const showingsCount = c.showings ? c.showings.length : 0;
+        const readyReminder = getReadyReminder(c.readyDate);
         html += `<div class="client-card" tabindex="0" data-id="${c.id}">
           <div class="card-top">
             <h3 class="client-name">${escapeHtml(c.name) || '(Unnamed)'}</h3>
@@ -849,6 +939,7 @@
             <div class="card-meta-row"><span class="card-meta-label">Phone</span><span>${escapeHtml(c.phone) || '—'}</span></div>
             <div class="card-meta-row"><span class="card-meta-label">Email</span><span>${escapeHtml(c.email) || '—'}</span></div>
             <div class="card-meta-row"><span class="card-meta-label">Last contact</span><span class="${stale?'last-contacted-stale':''}">${fmtDate(c.lastContacted)}${stale && c.lastContacted ? ' ⚠' : ''}</span></div>
+            ${readyReminder && readyReminder.due ? `<div class="card-meta-row"><span class="card-meta-label">Follow up</span><span class="last-contacted-stale">Ready ${fmtDate(c.readyDate)} ⚠</span></div>` : ''}
           </div>
           <div class="card-divider"></div>
           <div class="card-bottom-row">
@@ -902,6 +993,11 @@
                 <label class="field-label">Prequalified Amount ($)</label>
                 <input type="number" id="f_prequal" value="${escapeHtml(c.prequalAmount)}" placeholder="450000" min="0" step="1000">
               </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">Ready Date <span style="text-transform:none;font-weight:400;color:#9A9384;">(when they said they'll be ready to move forward)</span></label>
+              <input type="date" id="f_readyDate" value="${escapeHtml(c.readyDate)}">
+              <div class="ready-hint" id="readyHint">${readyHintText(c.readyDate)}</div>
             </div>
             <div class="field-group">
               <label class="field-label">Notes</label>
@@ -970,6 +1066,7 @@
     editDraft.email = document.getElementById('f_email').value;
     editDraft.lastContacted = document.getElementById('f_lastContacted').value;
     editDraft.prequalAmount = document.getElementById('f_prequal').value;
+    editDraft.readyDate = document.getElementById('f_readyDate').value;
     editDraft.notes = document.getElementById('f_notes').value;
     const rows = document.querySelectorAll('#showingsList .showing-row');
     const showings = [];
@@ -985,9 +1082,21 @@
     const btnNew = document.getElementById('btnNew');
     if (btnNew) btnNew.onclick = () => openModal('new');
 
+    const readyDateInput = document.getElementById('f_readyDate');
+    if (readyDateInput) {
+      readyDateInput.oninput = () => {
+        const hint = document.getElementById('readyHint');
+        if (hint) hint.textContent = readyHintText(readyDateInput.value);
+      };
+    }
+
     document.querySelectorAll('.client-card').forEach(card => {
       card.onclick = () => openModal(card.dataset.id);
       card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModal(card.dataset.id); } };
+    });
+
+    document.querySelectorAll('.followup-chip').forEach(chip => {
+      chip.onclick = () => openModal(chip.dataset.id);
     });
 
     const searchInput = document.getElementById('searchInput');
