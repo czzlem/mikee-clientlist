@@ -30,24 +30,45 @@
      4. In Project settings (gear icon) → General → "Your apps" →
         click the </> (web) icon → register app → copy the
         firebaseConfig object it gives you.
-     5. Set CRM_PASSCODE in the small script just below to whatever
-        word/phrase you want people to type before they can see the
-        client list. This is a basic deterrent, NOT real security —
-        anyone who views this page's source code can read the
-        passcode. Don't rely on it to protect sensitive data; it
-        just keeps casual visitors out.
-     6. Then paste your firebaseConfig into the script below that,
-        replacing the placeholder values.
+<!-- ====================================================================
+     FIREBASE SETUP — read this before opening the file in a browser
+     ====================================================================
+     1. Go to https://console.firebase.google.com → Add project (free).
+     2. In your new project: Build → Firestore Database → Create database
+        → Start in PRODUCTION mode → pick any region → Enable.
+     3. Go to Firestore → Rules tab and replace the rules with:
+
+          rules_version = '2';
+          service cloud.firestore {
+            match /databases/{database}/documents {
+              match /{document=**} {
+                allow read, write: if request.auth != null;
+              }
+            }
+          }
+
+        (This requires a signed-in user for any read/write — combined
+        with step 5 below, this is real access control, not just a
+        page-level deterrent.)
+     4. In Project settings (gear icon) → General → "Your apps" →
+        click the </> (web) icon → register app → copy the
+        firebaseConfig object it gives you, and paste it into the
+        script below, replacing the placeholder values.
+     5. Go to Build → Authentication → Get started → enable the
+        Email/Password sign-in provider. Then go to the Users tab
+        and add an account (email + password) for each person who
+        should have access. There's no signup screen in this app on
+        purpose — accounts are created by you, in the console, only.
      ==================================================================== -->
-<script>
-  // Set synchronously (not inside the module script below) so the
-  // passcode is available immediately — module scripts run async and
-  // can otherwise lose the race against the gate screen's click handler.
-  window.CRM_PASSCODE = "bball213";
-</script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import {
+    getAuth,
+    signInWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyBkMg_iVFbjRpUpDYhfwFFBomgPKO1hq3Y",
@@ -60,6 +81,7 @@
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
+  const auth = getAuth(app);
   const clientsDocRef = doc(db, "crm", "clients");
 
   // Expose a minimal storage-like API so the rest of the app's code
@@ -73,6 +95,20 @@
     async set(value) {
       await setDoc(clientsDocRef, { value });
       return { value };
+    }
+  };
+
+  // Expose a minimal auth API for the gate screen to use.
+  window.crmAuth = {
+    async signIn(email, password) {
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      return cred.user;
+    },
+    async signOut() {
+      await signOut(auth);
+    },
+    onStateChange(callback) {
+      onAuthStateChanged(auth, (user) => callback(user));
     }
   };
   window.crmStorageReady = true;
@@ -596,7 +632,7 @@
     color: var(--ink-soft);
     margin-bottom: 20px;
   }
-  .gate-card input[type=password] {
+  .gate-card input[type=password], .gate-card input[type=email] {
     text-align: center;
     letter-spacing: 0.04em;
     margin-bottom: 12px;
@@ -619,7 +655,23 @@
     cursor: pointer;
   }
   .gate-submit:hover { background: var(--brass-deep); }
+  .gate-submit:disabled { opacity: 0.6; cursor: default; }
   .gate-submit:focus-visible, .gate-card input:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+
+  .signout-btn {
+    background: none;
+    border: 1.5px solid var(--hairline);
+    color: var(--ink-soft);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .signout-btn:hover { border-color: var(--clay); color: var(--clay-deep); }
+  .signout-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+  .header-actions { display: flex; align-items: center; gap: 10px; }
 
   @media (max-width: 640px) {
     .stats-strip { grid-template-columns: repeat(2, 1fr); }
@@ -650,17 +702,28 @@
   let saving = false;
   let unlocked = false;
   let gateError = '';
+  let gateSubmitting = false;
+  let currentUserEmail = '';
 
-  const GATE_SESSION_KEY = 'crm_unlocked';
-
-  function checkGateOnLoad() {
-    try {
-      if (sessionStorage.getItem(GATE_SESSION_KEY) === 'true') {
+  function initAuthListener() {
+    if (!window.crmAuth) return;
+    window.crmAuth.onStateChange((user) => {
+      const wasUnlocked = unlocked;
+      if (user) {
         unlocked = true;
+        currentUserEmail = user.email || '';
+        if (!wasUnlocked) {
+          // Just signed in — the earlier load attempt (if any) ran
+          // before we were authenticated and would have been rejected
+          // by Firestore rules, so fetch the real data now.
+          loadClients();
+        }
+      } else {
+        unlocked = false;
+        currentUserEmail = '';
+        render();
       }
-    } catch (e) {
-      // sessionStorage unavailable; fall back to asking every load
-    }
+    });
   }
 
   function renderGate() {
@@ -669,38 +732,56 @@
       <div class="gate-wrap">
         <div class="gate-card">
           <h1 class="gate-title">Client Ledger</h1>
-          <div class="gate-sub">Enter the passcode to view this client list.</div>
+          <div class="gate-sub">Sign in to view this client list.</div>
           <div class="gate-error">${gateError}</div>
-          <input type="password" id="gateInput" placeholder="Passcode" autofocus>
-          <button class="gate-submit" id="gateSubmit">Unlock</button>
+          <input type="email" id="gateEmail" placeholder="Email" autocomplete="username">
+          <input type="password" id="gatePassword" placeholder="Password" autocomplete="current-password">
+          <button class="gate-submit" id="gateSubmit" ${gateSubmitting ? 'disabled' : ''}>${gateSubmitting ? 'Signing in…' : 'Sign in'}</button>
         </div>
       </div>
     `;
-    const input = document.getElementById('gateInput');
+    const emailInput = document.getElementById('gateEmail');
+    const passwordInput = document.getElementById('gatePassword');
     const submit = document.getElementById('gateSubmit');
-    const tryUnlock = () => {
-      const val = input.value;
-      const expected = window.CRM_PASSCODE;
-      if (typeof expected !== 'string' || !expected || expected === 'changeme') {
-        gateError = 'No passcode has been set up for this page yet. See the setup comment near the top of the HTML file.';
+    const trySignIn = async () => {
+      if (gateSubmitting) return;
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      if (!email || !password) {
+        gateError = 'Enter both your email and password.';
         renderGate();
         return;
       }
-      if (val === expected) {
-        unlocked = true;
-        gateError = '';
-        try { sessionStorage.setItem(GATE_SESSION_KEY, 'true'); } catch (e) {}
-        render();
-      } else {
-        gateError = "That passcode didn't work — try again.";
+      if (!window.crmAuth) {
+        gateError = "Couldn't reach the sign-in service. Make sure your Firebase config is set up — see the setup comment near the top of the HTML file.";
         renderGate();
-        const freshInput = document.getElementById('gateInput');
-        if (freshInput) freshInput.focus();
+        return;
+      }
+      gateSubmitting = true;
+      gateError = '';
+      renderGate();
+      try {
+        await window.crmAuth.signIn(email, password);
+        // onStateChange listener will flip `unlocked` and re-render.
+      } catch (e) {
+        gateSubmitting = false;
+        gateError = "That email or password didn't work — try again.";
+        renderGate();
+        const freshPw = document.getElementById('gatePassword');
+        if (freshPw) freshPw.focus();
       }
     };
-    submit.onclick = tryUnlock;
-    input.onkeydown = (e) => { if (e.key === 'Enter') tryUnlock(); };
-    input.focus();
+    submit.onclick = trySignIn;
+    passwordInput.onkeydown = (e) => { if (e.key === 'Enter') trySignIn(); };
+    emailInput.onkeydown = (e) => { if (e.key === 'Enter') passwordInput.focus(); };
+    emailInput.focus();
+  }
+
+  async function handleSignOut() {
+    if (window.crmAuth) {
+      try { await window.crmAuth.signOut(); } catch (e) {}
+    }
+    // onStateChange listener will flip `unlocked` to false and re-render.
   }
 
   function uid() {
@@ -864,9 +945,12 @@
     html += `<div class="ledger-header">
       <div>
         <h1 class="ledger-title">Client Ledger</h1>
-        <div class="ledger-sub">${clients.length} client${clients.length===1?'':'s'} on file · shared list — synced for anyone using this Firebase project</div>
+        <div class="ledger-sub">${clients.length} client${clients.length===1?'':'s'} on file · signed in as ${escapeHtml(currentUserEmail)}</div>
       </div>
-      <button class="new-client-btn" id="btnNew">+ New Client</button>
+      <div class="header-actions">
+        <button class="new-client-btn" id="btnNew">+ New Client</button>
+        <button class="signout-btn" id="btnSignOut">Sign out</button>
+      </div>
     </div>`;
 
     if (!loaded) {
@@ -1082,6 +1166,9 @@
     const btnNew = document.getElementById('btnNew');
     if (btnNew) btnNew.onclick = () => openModal('new');
 
+    const btnSignOut = document.getElementById('btnSignOut');
+    if (btnSignOut) btnSignOut.onclick = handleSignOut;
+
     const readyDateInput = document.getElementById('f_readyDate');
     if (readyDateInput) {
       readyDateInput.oninput = () => {
@@ -1191,7 +1278,7 @@
     }
   }
 
-  checkGateOnLoad();
+  initAuthListener();
   loadClients();
 })();
 </script>
