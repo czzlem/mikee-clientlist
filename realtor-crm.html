@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- ====================================================================
+     FIREBASE SETUP — read this before opening the file in a browser
+     ====================================================================
+     1. Go to https://console.firebase.google.com → Add project (free).
+     2. In your new project: Build → Firestore Database → Create database
+        → Start in PRODUCTION mode → pick any region → Enable.
+     3. Go to Firestore → Rules tab and replace the rules with:
+
+          rules_version = '2';
+          service cloud.firestore {
+            match /databases/{database}/documents {
+              match /{document=**} {
+                allow read, write: if true;
+              }
+            }
+          }
+
+        (This makes the data open to anyone with your config below —
+        fine for a small shared tool between trusted people, but do not
+        put highly sensitive data in it.)
+     4. In Project settings (gear icon) → General → "Your apps" →
+        click the </> (web) icon → register app → copy the
+        firebaseConfig object it gives you.
+     5. Paste it below, replacing the placeholder values.
+     6. Also set CRM_PASSCODE below to whatever word/phrase you want
+        people to type before they can see the client list. This is
+        a basic deterrent, NOT real security — anyone who views this
+        page's source code can read the passcode. Don't rely on it to
+        protect sensitive data; it just keeps casual visitors out.
+     ==================================================================== -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+  apiKey: "AIzaSyBkMg_iVFbjRpUpDYhfwFFBomgPKO1hq3Y",
+  authDomain: "mikee-client-list.firebaseapp.com",
+  projectId: "mikee-client-list",
+  storageBucket: "mikee-client-list.firebasestorage.app",
+  messagingSenderId: "244027138664",
+  appId: "1:244027138664:web:2a01bc91edec07940851dd",
+  measurementId: "G-YDK72S0D1M"
+};
+
+  // Change this to your own passcode before deploying.
+  window.CRM_PASSCODE = "bball213";
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const clientsDocRef = doc(db, "crm", "clients");
+
+  // Expose a minimal storage-like API so the rest of the app's code
+  // doesn't need to change.
+  window.crmStorage = {
+    async get() {
+      const snap = await getDoc(clientsDocRef);
+      if (!snap.exists()) return null;
+      return { value: snap.data().value };
+    },
+    async set(value) {
+      await setDoc(clientsDocRef, { value });
+      return { value };
+    }
+  };
+  window.crmStorageReady = true;
+</script>
+<style>
+  :root {
+    --ink: #1C2530;
+    --ink-soft: #3A4452;
+    --parchment: #F7F4EE;
+    --parchment-deep: #EFEAE0;
+    --card: #FFFDF9;
+    --brass: #B8915A;
+    --brass-deep: #96703F;
+    --sage: #7A8B76;
+    --sage-deep: #5F6E5C;
+    --clay: #A6614C;
+    --clay-deep: #864B39;
+    --hairline: #D8D2C4;
+    --hairline-soft: #E5E0D5;
+    --danger: #A6614C;
+    --shadow: 0 1px 2px rgba(28,37,48,0.06), 0 4px 12px rgba(28,37,48,0.06);
+    --shadow-lift: 0 4px 8px rgba(28,37,48,0.08), 0 12px 32px rgba(28,37,48,0.12);
+    --radius: 10px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--parchment);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #app {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 28px 20px 80px;
+  }
+
+  /* ===== Header ===== */
+  .ledger-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 22px;
+    padding-bottom: 18px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .ledger-title {
+    font-family: 'Fraunces', serif;
+    font-optical-sizing: auto;
+    font-weight: 600;
+    font-size: 34px;
+    letter-spacing: -0.01em;
+    margin: 0;
+    line-height: 1;
+  }
+  .ledger-sub {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 6px;
+    letter-spacing: 0.02em;
+  }
+  .new-client-btn {
+    background: var(--ink);
+    color: var(--parchment);
+    border: none;
+    border-radius: 999px;
+    padding: 11px 20px;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform 0.12s ease, background 0.12s ease;
+    box-shadow: var(--shadow);
+  }
+  .new-client-btn:hover { background: var(--brass-deep); }
+  .new-client-btn:active { transform: scale(0.97); }
+  .new-client-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  /* ===== Filter / Search bar ===== */
+  .controls-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .search-box {
+    flex: 1;
+    min-width: 180px;
+    position: relative;
+  }
+  .search-box input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--hairline);
+    border-radius: 8px;
+    background: var(--card);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .search-box input:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+  .search-box input::placeholder { color: #9A9384; }
+
+  .status-filters {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .status-filter-btn {
+    border: 1.5px solid var(--hairline);
+    background: var(--card);
+    color: var(--ink-soft);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .status-filter-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+  .status-filter-btn.active-all { background: var(--ink); color: var(--parchment); border-color: var(--ink); }
+  .status-filter-btn.active-active { background: var(--brass); color: #fff; border-color: var(--brass); }
+  .status-filter-btn.active-prospective { background: var(--sage); color: #fff; border-color: var(--sage); }
+  .status-filter-btn.active-past { background: var(--clay); color: #fff; border-color: var(--clay); }
+
+  .sort-select {
+    border: 1.5px solid var(--hairline);
+    background: var(--card);
+    color: var(--ink-soft);
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+  }
+
+  /* ===== Stats strip ===== */
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--hairline-soft);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+  }
+  .stat-num {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 24px;
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+    margin-top: 4px;
+  }
+
+  /* ===== Client grid ===== */
+  .client-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+  }
+
+  .client-card {
+    background: var(--card);
+    border: 1px solid var(--hairline-soft);
+    border-radius: var(--radius);
+    padding: 16px 16px 14px;
+    cursor: pointer;
+    position: relative;
+    box-shadow: var(--shadow);
+    transition: transform 0.14s ease, box-shadow 0.14s ease;
+  }
+  .client-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+  .client-card:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .client-name {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 19px;
+    line-height: 1.2;
+    margin: 0;
+  }
+
+  /* Stamp-style status badge */
+  .stamp {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 5px 9px 4px;
+    border-radius: 4px;
+    border: 1.5px solid transparent;
+    transform: rotate(-2deg);
+    white-space: nowrap;
+  }
+  .stamp-active { color: var(--brass-deep); border-color: var(--brass); background: rgba(184,145,90,0.10); }
+  .stamp-prospective { color: var(--sage-deep); border-color: var(--sage); background: rgba(122,139,118,0.10); }
+  .stamp-past { color: var(--clay-deep); border-color: var(--clay); background: rgba(166,97,76,0.10); }
+
+  .card-meta {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .card-meta-row { display: flex; align-items: baseline; gap: 6px; }
+  .card-meta-label { color: #9A9384; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; min-width: 76px; }
+
+  .card-divider { height: 1px; background: var(--hairline-soft); margin: 10px 0; }
+
+  .card-bottom-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12.5px;
+  }
+  .prequal-amount {
+    font-family: 'Inter', sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--brass-deep);
+    font-size: 14px;
+  }
+  .showings-count {
+    color: var(--ink-soft);
+  }
+  .last-contacted-stale { color: var(--clay-deep); font-weight: 600; }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--ink-soft);
+  }
+  .empty-state-title {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    color: var(--ink);
+    margin-bottom: 8px;
+  }
+
+  /* ===== Modal / Detail panel ===== */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(28,37,48,0.45);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 24px 16px;
+    overflow-y: auto;
+    z-index: 100;
+  }
+  .modal {
+    background: var(--parchment);
+    border-radius: 14px;
+    max-width: 640px;
+    width: 100%;
+    box-shadow: var(--shadow-lift);
+    margin-top: 20px;
+    margin-bottom: 20px;
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .modal-title {
+    font-family: 'Fraunces', serif;
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .icon-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--ink-soft);
+    font-size: 20px;
+    line-height: 1;
+    padding: 6px;
+    border-radius: 6px;
+  }
+  .icon-btn:hover { background: var(--hairline-soft); color: var(--ink); }
+  .icon-btn:focus-visible { outline: 2px solid var(--brass); }
+
+  .modal-body { padding: 22px 24px 28px; }
+
+  .field-group { margin-bottom: 16px; }
+  .field-label {
+    display: block;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  input[type=text], input[type=tel], input[type=email], input[type=number], input[type=date], textarea, select.form-select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid var(--hairline);
+    border-radius: 8px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14.5px;
+    color: var(--ink);
+    background: var(--card);
+  }
+  input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+  textarea { resize: vertical; min-height: 70px; font-family: 'Inter', sans-serif; }
+
+  .status-toggle-group { display: flex; gap: 8px; }
+  .status-toggle {
+    flex: 1;
+    border: 1.5px solid var(--hairline);
+    background: var(--card);
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--ink-soft);
+    transition: all 0.12s ease;
+  }
+  .status-toggle:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+  .status-toggle.sel-active { background: var(--brass); color: #fff; border-color: var(--brass); }
+  .status-toggle.sel-prospective { background: var(--sage); color: #fff; border-color: var(--sage); }
+  .status-toggle.sel-past { background: var(--clay); color: #fff; border-color: var(--clay); }
+
+  .section-title {
+    font-family: 'Fraunces', serif;
+    font-size: 16px;
+    font-weight: 600;
+    margin: 22px 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* Showings ledger */
+  .showings-list { display: flex; flex-direction: column; gap: 8px; }
+  .showing-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--card);
+    border: 1px solid var(--hairline-soft);
+    border-radius: 8px;
+    padding: 9px 12px;
+  }
+  .showing-row input[type=text] { border: none; background: transparent; padding: 2px 0; font-size: 14px; }
+  .showing-row input[type=date] { border: none; background: transparent; padding: 2px 0; font-size: 13px; color: var(--ink-soft); width: 130px; }
+  .showing-remove {
+    background: none; border: none; color: #B0A89A; cursor: pointer; font-size: 16px; padding: 2px 4px; flex-shrink: 0;
+  }
+  .showing-remove:hover { color: var(--clay-deep); }
+  .add-showing-btn, .add-link-btn {
+    background: none;
+    border: 1.5px dashed var(--hairline);
+    color: var(--ink-soft);
+    border-radius: 8px;
+    padding: 9px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 6px;
+  }
+  .add-showing-btn:hover { border-color: var(--brass); color: var(--brass-deep); }
+  .add-showing-btn:focus-visible { outline: 2px solid var(--brass); }
+
+  .modal-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 26px;
+    padding-top: 16px;
+    border-top: 1px solid var(--hairline-soft);
+  }
+  .delete-btn {
+    background: none;
+    border: none;
+    color: var(--clay-deep);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 8px 4px;
+  }
+  .delete-btn:hover { text-decoration: underline; }
+  .save-btn {
+    background: var(--ink);
+    color: var(--parchment);
+    border: none;
+    border-radius: 999px;
+    padding: 11px 24px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .save-btn:hover { background: var(--brass-deep); }
+  .save-btn:focus-visible, .delete-btn:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  .confirm-box {
+    background: #FBF0EC;
+    border: 1.5px solid var(--clay);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 14px;
+    font-size: 13.5px;
+  }
+  .confirm-box-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .confirm-btn-yes { background: var(--clay-deep); color: #fff; border: none; border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .confirm-btn-no { background: none; border: 1px solid var(--hairline); border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer; color: var(--ink-soft); }
+
+  .loading-banner, .error-banner {
+    text-align: center;
+    padding: 10px;
+    font-size: 13px;
+    border-radius: 8px;
+    margin-bottom: 14px;
+  }
+  .loading-banner { background: var(--hairline-soft); color: var(--ink-soft); }
+  .error-banner { background: #FBF0EC; color: var(--clay-deep); }
+
+  /* ===== Passcode gate ===== */
+  .gate-wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .gate-card {
+    background: var(--card);
+    border: 1px solid var(--hairline-soft);
+    border-radius: 14px;
+    box-shadow: var(--shadow-lift);
+    padding: 32px 28px;
+    max-width: 360px;
+    width: 100%;
+    text-align: center;
+  }
+  .gate-title {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 24px;
+    margin: 0 0 6px;
+  }
+  .gate-sub {
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-bottom: 20px;
+  }
+  .gate-card input[type=password] {
+    text-align: center;
+    letter-spacing: 0.04em;
+    margin-bottom: 12px;
+  }
+  .gate-error {
+    color: var(--clay-deep);
+    font-size: 13px;
+    margin-bottom: 12px;
+    min-height: 16px;
+  }
+  .gate-submit {
+    width: 100%;
+    background: var(--ink);
+    color: var(--parchment);
+    border: none;
+    border-radius: 999px;
+    padding: 11px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .gate-submit:hover { background: var(--brass-deep); }
+  .gate-submit:focus-visible, .gate-card input:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+
+  @media (max-width: 640px) {
+    .stats-strip { grid-template-columns: repeat(2, 1fr); }
+    .field-row { grid-template-columns: 1fr; }
+    .ledger-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+    .new-client-btn { width: 100%; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function() {
+  let clients = [];
+  let loaded = false;
+  let loadError = false;
+  let searchTerm = '';
+  let statusFilter = 'all';
+  let sortBy = 'name';
+  let openClientId = null;
+  let editDraft = null;
+  let confirmingDelete = false;
+  let saving = false;
+  let unlocked = false;
+  let gateError = '';
+
+  const GATE_SESSION_KEY = 'crm_unlocked';
+
+  function checkGateOnLoad() {
+    try {
+      if (sessionStorage.getItem(GATE_SESSION_KEY) === 'true') {
+        unlocked = true;
+      }
+    } catch (e) {
+      // sessionStorage unavailable; fall back to asking every load
+    }
+  }
+
+  function renderGate() {
+    const app = document.getElementById('app');
+    app.innerHTML = `
+      <div class="gate-wrap">
+        <div class="gate-card">
+          <h1 class="gate-title">Client Ledger</h1>
+          <div class="gate-sub">Enter the passcode to view this client list.</div>
+          <div class="gate-error">${gateError}</div>
+          <input type="password" id="gateInput" placeholder="Passcode" autofocus>
+          <button class="gate-submit" id="gateSubmit">Unlock</button>
+        </div>
+      </div>
+    `;
+    const input = document.getElementById('gateInput');
+    const submit = document.getElementById('gateSubmit');
+    const tryUnlock = () => {
+      const val = input.value;
+      const expected = window.CRM_PASSCODE;
+      if (typeof expected !== 'string' || !expected || expected === 'changeme') {
+        gateError = 'No passcode has been set up for this page yet. See the setup comment near the top of the HTML file.';
+        renderGate();
+        return;
+      }
+      if (val === expected) {
+        unlocked = true;
+        gateError = '';
+        try { sessionStorage.setItem(GATE_SESSION_KEY, 'true'); } catch (e) {}
+        render();
+      } else {
+        gateError = "That passcode didn't work — try again.";
+        renderGate();
+        const freshInput = document.getElementById('gateInput');
+        if (freshInput) freshInput.focus();
+      }
+    };
+    submit.onclick = tryUnlock;
+    input.onkeydown = (e) => { if (e.key === 'Enter') tryUnlock(); };
+    input.focus();
+  }
+
+  function uid() {
+    return 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,8);
+  }
+
+  function emptyClient() {
+    return {
+      id: uid(),
+      name: '',
+      phone: '',
+      email: '',
+      status: 'prospective',
+      lastContacted: '',
+      prequalAmount: '',
+      notes: '',
+      showings: []
+    };
+  }
+
+  async function waitForStorageReady(timeoutMs = 8000) {
+    const start = Date.now();
+    while (!window.crmStorageReady) {
+      if (Date.now() - start > timeoutMs) return false;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    return true;
+  }
+
+  async function loadClients() {
+    const ready = await waitForStorageReady();
+    if (!ready) {
+      loadError = true;
+      loaded = true;
+      render();
+      return;
+    }
+    try {
+      const res = await window.crmStorage.get();
+      clients = res && res.value ? JSON.parse(res.value) : [];
+      loadError = false;
+    } catch (e) {
+      clients = [];
+      loadError = true;
+    }
+    loaded = true;
+    render();
+  }
+
+  async function persist() {
+    saving = true;
+    try {
+      await window.crmStorage.set(JSON.stringify(clients));
+      loadError = false;
+    } catch (e) {
+      loadError = true;
+    }
+    saving = false;
+    render();
+  }
+
+  function fmtMoney(val) {
+    if (val === '' || val === null || val === undefined) return '—';
+    const num = Number(val);
+    if (isNaN(num)) return '—';
+    return '$' + num.toLocaleString('en-US');
+  }
+
+  function fmtDate(dstr) {
+    if (!dstr) return 'Never';
+    const d = new Date(dstr + 'T00:00:00');
+    if (isNaN(d.getTime())) return dstr;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function daysSince(dstr) {
+    if (!dstr) return Infinity;
+    const d = new Date(dstr + 'T00:00:00');
+    if (isNaN(d.getTime())) return Infinity;
+    return Math.floor((Date.now() - d.getTime()) / (1000*60*60*24));
+  }
+
+  function statusLabel(s) {
+    return { active: 'Active', prospective: 'Prospective', past: 'Past Client' }[s] || s;
+  }
+
+  function escapeHtml(str) {
+    if (str === undefined || str === null) return '';
+    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function getFilteredSorted() {
+    let list = clients.slice();
+    if (statusFilter !== 'all') list = list.filter(c => c.status === statusFilter);
+    if (searchTerm.trim()) {
+      const t = searchTerm.trim().toLowerCase();
+      list = list.filter(c =>
+        (c.name||'').toLowerCase().includes(t) ||
+        (c.email||'').toLowerCase().includes(t) ||
+        (c.phone||'').toLowerCase().includes(t) ||
+        (c.notes||'').toLowerCase().includes(t)
+      );
+    }
+    if (sortBy === 'name') {
+      list.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+    } else if (sortBy === 'recent') {
+      list.sort((a,b) => daysSince(a.lastContacted) - daysSince(b.lastContacted));
+    } else if (sortBy === 'stale') {
+      list.sort((a,b) => daysSince(b.lastContacted) - daysSince(a.lastContacted));
+    } else if (sortBy === 'prequal') {
+      list.sort((a,b) => (Number(b.prequalAmount)||0) - (Number(a.prequalAmount)||0));
+    }
+    return list;
+  }
+
+  function render() {
+    if (!unlocked) {
+      renderGate();
+      return;
+    }
+    const app = document.getElementById('app');
+    const counts = {
+      all: clients.length,
+      active: clients.filter(c=>c.status==='active').length,
+      prospective: clients.filter(c=>c.status==='prospective').length,
+      past: clients.filter(c=>c.status==='past').length
+    };
+
+    let html = '';
+
+    html += `<div class="ledger-header">
+      <div>
+        <h1 class="ledger-title">Client Ledger</h1>
+        <div class="ledger-sub">${clients.length} client${clients.length===1?'':'s'} on file · shared list — synced for anyone using this Firebase project</div>
+      </div>
+      <button class="new-client-btn" id="btnNew">+ New Client</button>
+    </div>`;
+
+    if (!loaded) {
+      html += `<div class="loading-banner">Loading your client ledger…</div>`;
+      app.innerHTML = html;
+      return;
+    }
+    if (loadError) {
+      html += `<div class="error-banner">Couldn't connect to the database. If you just downloaded this file, make sure you've pasted your Firebase config into the HTML — see the setup comment near the top of the file.</div>`;
+    }
+
+    html += `<div class="stats-strip">
+      <div class="stat-card"><div class="stat-num">${counts.active}</div><div class="stat-label">Active</div></div>
+      <div class="stat-card"><div class="stat-num">${counts.prospective}</div><div class="stat-label">Prospective</div></div>
+      <div class="stat-card"><div class="stat-num">${counts.past}</div><div class="stat-label">Past Clients</div></div>
+      <div class="stat-card"><div class="stat-num">${clients.reduce((s,c)=>s+(c.showings?c.showings.length:0),0)}</div><div class="stat-label">Showings Logged</div></div>
+    </div>`;
+
+    html += `<div class="controls-row">
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="Search name, email, phone, notes…" value="${escapeHtml(searchTerm)}">
+      </div>
+      <select class="sort-select" id="sortSelect">
+        <option value="name" ${sortBy==='name'?'selected':''}>Sort: Name</option>
+        <option value="stale" ${sortBy==='stale'?'selected':''}>Sort: Needs follow-up</option>
+        <option value="recent" ${sortBy==='recent'?'selected':''}>Sort: Recently contacted</option>
+        <option value="prequal" ${sortBy==='prequal'?'selected':''}>Sort: Prequalified amount</option>
+      </select>
+    </div>`;
+
+    html += `<div class="status-filters">
+      <button class="status-filter-btn ${statusFilter==='all'?'active-all':''}" data-filter="all">All (${counts.all})</button>
+      <button class="status-filter-btn ${statusFilter==='active'?'active-active':''}" data-filter="active">Active (${counts.active})</button>
+      <button class="status-filter-btn ${statusFilter==='prospective'?'active-prospective':''}" data-filter="prospective">Prospective (${counts.prospective})</button>
+      <button class="status-filter-btn ${statusFilter==='past'?'active-past':''}" data-filter="past">Past (${counts.past})</button>
+    </div>`;
+
+    const list = getFilteredSorted();
+
+    if (list.length === 0) {
+      html += `<div class="empty-state">
+        <div class="empty-state-title">${clients.length === 0 ? 'No clients yet' : 'No matches'}</div>
+        <div>${clients.length === 0 ? 'Add your first client to start the ledger.' : 'Try a different search or filter.'}</div>
+      </div>`;
+    } else {
+      html += `<div class="client-grid">`;
+      list.forEach(c => {
+        const stale = daysSince(c.lastContacted) >= 14;
+        const showingsCount = c.showings ? c.showings.length : 0;
+        html += `<div class="client-card" tabindex="0" data-id="${c.id}">
+          <div class="card-top">
+            <h3 class="client-name">${escapeHtml(c.name) || '(Unnamed)'}</h3>
+            <span class="stamp stamp-${c.status}">${statusLabel(c.status)}</span>
+          </div>
+          <div class="card-meta">
+            <div class="card-meta-row"><span class="card-meta-label">Phone</span><span>${escapeHtml(c.phone) || '—'}</span></div>
+            <div class="card-meta-row"><span class="card-meta-label">Email</span><span>${escapeHtml(c.email) || '—'}</span></div>
+            <div class="card-meta-row"><span class="card-meta-label">Last contact</span><span class="${stale?'last-contacted-stale':''}">${fmtDate(c.lastContacted)}${stale && c.lastContacted ? ' ⚠' : ''}</span></div>
+          </div>
+          <div class="card-divider"></div>
+          <div class="card-bottom-row">
+            <span class="prequal-amount">${fmtMoney(c.prequalAmount)}</span>
+            <span class="showings-count">${showingsCount} house${showingsCount===1?'':'s'} shown</span>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    // Modal
+    if (openClientId !== null) {
+      const isNew = openClientId === 'new';
+      const c = editDraft;
+      html += `<div class="overlay" id="overlay">
+        <div class="modal" id="modalBox">
+          <div class="modal-header">
+            <h2 class="modal-title">${isNew ? 'New Client' : 'Edit Client'}</h2>
+            <button class="icon-btn" id="btnClose" aria-label="Close">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="field-group">
+              <label class="field-label">Name</label>
+              <input type="text" id="f_name" value="${escapeHtml(c.name)}" placeholder="Jordan Reyes">
+            </div>
+            <div class="field-row">
+              <div class="field-group">
+                <label class="field-label">Phone</label>
+                <input type="tel" id="f_phone" value="${escapeHtml(c.phone)}" placeholder="(555) 012-3456">
+              </div>
+              <div class="field-group">
+                <label class="field-label">Email</label>
+                <input type="email" id="f_email" value="${escapeHtml(c.email)}" placeholder="jordan@email.com">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">Status</label>
+              <div class="status-toggle-group">
+                <button type="button" class="status-toggle ${c.status==='active'?'sel-active':''}" data-status="active">Active</button>
+                <button type="button" class="status-toggle ${c.status==='prospective'?'sel-prospective':''}" data-status="prospective">Prospective</button>
+                <button type="button" class="status-toggle ${c.status==='past'?'sel-past':''}" data-status="past">Past Client</button>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field-group">
+                <label class="field-label">Last Contacted</label>
+                <input type="date" id="f_lastContacted" value="${escapeHtml(c.lastContacted)}">
+              </div>
+              <div class="field-group">
+                <label class="field-label">Prequalified Amount ($)</label>
+                <input type="number" id="f_prequal" value="${escapeHtml(c.prequalAmount)}" placeholder="450000" min="0" step="1000">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">Notes</label>
+              <textarea id="f_notes" placeholder="Preferences, family details, timeline, anything worth remembering…">${escapeHtml(c.notes)}</textarea>
+            </div>
+
+            <div class="section-title">Houses Shown</div>
+            <div class="showings-list" id="showingsList">
+              ${(c.showings||[]).map((s, idx) => `
+                <div class="showing-row" data-idx="${idx}">
+                  <input type="text" class="showing-address" placeholder="123 Maple St" value="${escapeHtml(s.address)}">
+                  <input type="date" class="showing-date" value="${escapeHtml(s.date)}">
+                  <button class="showing-remove" data-remove-idx="${idx}" aria-label="Remove showing">✕</button>
+                </div>
+              `).join('')}
+            </div>
+            <button class="add-showing-btn" id="btnAddShowing">+ Add house shown</button>
+
+            ${confirmingDelete ? `
+              <div class="confirm-box">
+                Delete this client permanently? This can't be undone.
+                <div class="confirm-box-actions">
+                  <button class="confirm-btn-yes" id="btnConfirmDelete">Delete</button>
+                  <button class="confirm-btn-no" id="btnCancelDelete">Cancel</button>
+                </div>
+              </div>
+            ` : ''}
+
+            <div class="modal-footer">
+              ${!isNew ? `<button class="delete-btn" id="btnDelete">Delete client</button>` : `<span></span>`}
+              <button class="save-btn" id="btnSave">${saving ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    app.innerHTML = html;
+    attachHandlers();
+  }
+
+  function openModal(id) {
+    confirmingDelete = false;
+    if (id === 'new') {
+      editDraft = emptyClient();
+      openClientId = 'new';
+    } else {
+      const c = clients.find(x => x.id === id);
+      if (!c) return;
+      editDraft = JSON.parse(JSON.stringify(c));
+      openClientId = id;
+    }
+    render();
+  }
+
+  function closeModal() {
+    openClientId = null;
+    editDraft = null;
+    confirmingDelete = false;
+    render();
+  }
+
+  function readDraftFromForm() {
+    editDraft.name = document.getElementById('f_name').value;
+    editDraft.phone = document.getElementById('f_phone').value;
+    editDraft.email = document.getElementById('f_email').value;
+    editDraft.lastContacted = document.getElementById('f_lastContacted').value;
+    editDraft.prequalAmount = document.getElementById('f_prequal').value;
+    editDraft.notes = document.getElementById('f_notes').value;
+    const rows = document.querySelectorAll('#showingsList .showing-row');
+    const showings = [];
+    rows.forEach(row => {
+      const addr = row.querySelector('.showing-address').value;
+      const date = row.querySelector('.showing-date').value;
+      showings.push({ address: addr, date: date });
+    });
+    editDraft.showings = showings;
+  }
+
+  function attachHandlers() {
+    const btnNew = document.getElementById('btnNew');
+    if (btnNew) btnNew.onclick = () => openModal('new');
+
+    document.querySelectorAll('.client-card').forEach(card => {
+      card.onclick = () => openModal(card.dataset.id);
+      card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModal(card.dataset.id); } };
+    });
+
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+      searchInput.oninput = (e) => {
+        searchTerm = e.target.value;
+        const cursorPos = e.target.selectionStart;
+        render();
+        const newInput = document.getElementById('searchInput');
+        if (newInput) {
+          newInput.focus();
+          newInput.setSelectionRange(cursorPos, cursorPos);
+        }
+      };
+    }
+
+    const sortSelect = document.getElementById('sortSelect');
+    if (sortSelect) sortSelect.onchange = (e) => { sortBy = e.target.value; render(); };
+
+    document.querySelectorAll('.status-filter-btn').forEach(btn => {
+      btn.onclick = () => { statusFilter = btn.dataset.filter; render(); };
+    });
+
+    const overlay = document.getElementById('overlay');
+    if (overlay) {
+      overlay.onclick = (e) => { if (e.target.id === 'overlay') closeModal(); };
+    }
+    const btnClose = document.getElementById('btnClose');
+    if (btnClose) btnClose.onclick = closeModal;
+
+    document.querySelectorAll('.status-toggle').forEach(btn => {
+      btn.onclick = () => {
+        readDraftFromForm();
+        editDraft.status = btn.dataset.status;
+        render();
+      };
+    });
+
+    const btnAddShowing = document.getElementById('btnAddShowing');
+    if (btnAddShowing) {
+      btnAddShowing.onclick = () => {
+        readDraftFromForm();
+        editDraft.showings.push({ address: '', date: '' });
+        render();
+        const inputs = document.querySelectorAll('#showingsList .showing-address');
+        if (inputs.length) inputs[inputs.length-1].focus();
+      };
+    }
+
+    document.querySelectorAll('[data-remove-idx]').forEach(btn => {
+      btn.onclick = () => {
+        readDraftFromForm();
+        const idx = parseInt(btn.dataset.removeIdx, 10);
+        editDraft.showings.splice(idx, 1);
+        render();
+      };
+    });
+
+    const btnSave = document.getElementById('btnSave');
+    if (btnSave) {
+      btnSave.onclick = async () => {
+        readDraftFromForm();
+        if (!editDraft.name.trim()) {
+          editDraft.name = editDraft.name.trim();
+          alert('Please enter a client name.');
+          return;
+        }
+        const idx = clients.findIndex(c => c.id === editDraft.id);
+        if (idx >= 0) {
+          clients[idx] = editDraft;
+        } else {
+          clients.push(editDraft);
+        }
+        closeModal();
+        await persist();
+      };
+    }
+
+    const btnDelete = document.getElementById('btnDelete');
+    if (btnDelete) btnDelete.onclick = () => { confirmingDelete = true; render(); };
+
+    const btnCancelDelete = document.getElementById('btnCancelDelete');
+    if (btnCancelDelete) btnCancelDelete.onclick = () => { confirmingDelete = false; render(); };
+
+    const btnConfirmDelete = document.getElementById('btnConfirmDelete');
+    if (btnConfirmDelete) {
+      btnConfirmDelete.onclick = async () => {
+        clients = clients.filter(c => c.id !== editDraft.id);
+        closeModal();
+        await persist();
+      };
+    }
+  }
+
+  checkGateOnLoad();
+  loadClients();
+})();
+</script>
+</body>
+</html>
